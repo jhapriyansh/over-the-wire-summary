@@ -1,0 +1,285 @@
+OverTheWire: Bandit — Level 0 to 33 Summary
+=============================================
+Completed: Nov 21-25, 2026
+Connect pattern: ssh -p 2220 <user>@bandit.labs.overthewire.org
+(Password for next level is cat'd from a file, stored in that level's home dir
+or /etc/bandit_pass/, unless noted otherwise below.)
+
+Level 0 -> 1
+  Initial login. Just ssh in with the published starting password.
+
+Level 1 -> 2
+  Password file is named "-". Dashes at the start of a filename get read as
+  a flag by most commands. Use ./- or cat -- - or give a path like ./-.
+
+Level 2 -> 3
+  Filename contains spaces. Quote it or escape the spaces: cat "file name"
+  or cat file\ name.
+
+Level 3 -> 4
+  File is hidden (dotfile) inside a subdirectory. ls -a to reveal hidden
+  files.
+
+Level 4 -> 5
+  Many files in a directory, only one is human-readable text; the rest are
+  non-text decoys. `file ./*` to see which one is ASCII text, then cat it.
+
+Level 5 -> 6
+  Find one file, among nested directories, matching specific properties:
+  human-readable, 1033 bytes, not executable. `find` with -size and -not
+  -executable (or -type f with a readability check) narrows it down.
+
+Level 6 -> 7
+  File located somewhere on the whole filesystem, owned by a specific user
+  and group, with an exact size. Use:
+    find / -user bandit7 -group bandit6 -size 33c 2>/dev/null
+  The trailing "c" on -size means bytes (default unit is 512-byte blocks).
+  2>/dev/null suppresses the flood of "Permission denied" noise.
+
+Level 7 -> 8
+  Password sits on a line in data.txt next to a specific marker word.
+    grep <marker> data.txt
+
+Level 8 -> 9
+  Password is the one line in data.txt that occurs only once.
+    sort data.txt | uniq -u
+
+Level 9 -> 10
+  data.txt is mostly binary with a few embedded readable strings. Don't
+  grep the raw binary (grep -a/--text works but is messy); instead:
+    strings data.txt | grep <marker>
+  strings extracts printable runs from binary data, which is exactly the
+  intended tool per the level's command list.
+
+Level 10 -> 11
+  data.txt contains a base64-encoded line.
+    base64 -d data.txt
+  Decodes straight to "The password is ...".
+
+Level 11 -> 12
+  data.txt is ROT13-encoded.
+    cat data.txt | tr 'A-Za-z' 'N-ZA-Mn-za-m'
+  (ROT13 is its own inverse, so this single tr call both "encodes" and
+  "decodes".)
+
+Level 12 -> 13
+  data.txt is a hexdump of a file that has been repeatedly compressed.
+  Workflow:
+    1. mktemp -d, copy data.txt into that temp dir, cd there.
+    2. Reverse the hexdump: xxd -r data.txt > data2 (or similar).
+    3. Loop: run `file` on the current file to identify its format
+       (gzip, bzip2, tar, etc.), rename with the matching extension via mv
+       (gzip/bzip2 care about extensions), then decompress with the
+       matching tool (gunzip / bunzip2 / tar xf). Repeat `file` -> rename
+       -> decompress until `file` reports "ASCII text".
+    4. cat the final result.
+  Took roughly 8-10 rounds of compression to unwrap.
+
+Level 13 -> 14
+  This level gives you an SSH private key (sshkey.private) instead of a
+  password, for logging in to bandit14.
+    scp -P 2220 bandit13@bandit.labs.overthewire.org:/home/bandit13/sshkey.private ~/
+    chmod 600 sshkey.private      (SSH refuses keys readable by others)
+    ssh -p 2220 -i sshkey.private bandit14@bandit.labs.overthewire.org
+  Common mistakes: using -P instead of -p for ssh (that's an scp-only
+  flag), forgetting the port entirely (defaults to port 22, which this
+  server rejects with a warning), and leaving the key file world-readable.
+
+Level 14 -> 15
+  Password for the current level is already known (readable directly from
+  /etc/bandit_pass/bandit14 once logged in as bandit14). Submit it to a
+  listening service on localhost to get the next password.
+    cat /etc/bandit_pass/bandit14
+    nc localhost 30000
+    <paste the password, hit enter> -> server replies "Correct!" plus the
+    next password.
+
+Level 15 -> 16
+  Same idea as above, but the service speaks SSL/TLS, so plain nc won't
+  complete a correct exchange.
+    ncat --ssl localhost 30001
+
+Level 16 -> 17
+  Port scan a range (31000-32000) to find listening servers, then work out
+  which ones speak SSL/TLS and which are plaintext echo services. Only one
+  server actually validates the password and returns the next one; echo
+  services just reflect whatever you send.
+    nmap -p 31000-32000 localhost
+  Then test each open port with ncat --ssl (for SSL ones) or plain nc,
+  submitting the current password, until one returns a private SSH key
+  instead of just echoing back.
+
+Level 17 -> 18
+  The matching server on this range hands back an SSH private key (rather
+  than a plaintext password) for bandit18. chmod 600 it and ssh in with -i
+  as in level 13->14.
+
+Level 18 -> 19
+  Logging in normally drops you right back out (a .bashrc-style trap logs
+  you off immediately). Bypass the interactive login entirely by running a
+  single command over SSH instead of opening a shell:
+    ssh -p 2220 bandit18@bandit.labs.overthewire.org 'cat readme'
+
+Level 19 -> 20
+  A setuid binary in the home directory runs as the next user. Just
+  execute it (e.g. ./bin_name cat /etc/bandit_pass/bandit20), since setuid
+  means it runs with the file owner's privileges regardless of who invokes
+  it.
+
+Level 20 -> 21
+  A setuid binary (suconnect) is a network CLIENT: it connects out to a
+  port you specify, reads one line from that connection, and compares it
+  to the current level's password. If it matches, it sends back the next
+  password. You must act as the SERVER it's connecting to:
+    1. In one session, start a listener on a free port and have it send
+       the current password as the first line, e.g.:
+         echo <bandit20 password> | nc -l -p <port>
+    2. In a second session (or background the listener), run:
+         ./suconnect <port>
+    3. Watch the listener's output for the returned next password.
+  Needs two concurrent sessions/terminals.
+
+Level 21 -> 22
+  Look at /etc/cron.d/ for a cron job owned by root that runs as the next
+  user on a schedule. Read the referenced script (usually in /usr/bin/) to
+  see what it does -- typically it copies /etc/bandit_pass/<user> into a
+  world-readable temp file.
+    cat /etc/cron.d/cronjob_bandit22
+    cat /usr/bin/cronjob_bandit22.sh
+    cat <the temp file path the script writes to>
+
+Level 22 -> 23
+  Same cron pattern, but the script computes the output filename
+  dynamically (e.g. hashing the username), so you have to read the script
+  logic to work out exactly which temp file to cat.
+
+Level 23 -> 24
+  Cron job runs any script inside a specific directory, as the next user,
+  then deletes it after running -- and it's owned/writable such that you
+  can drop your own script in. This is the "create your own first shell
+  script" level:
+    1. mktemp -d to make a scratch directory.
+    2. Write a small script (#!/bin/bash shebang) that copies
+       /etc/bandit_pass/<nextuser> into a file inside your scratch dir,
+       using the FULL absolute path (cron runs with a different cwd).
+    3. chmod +x the script, then place a COPY of it into the directory the
+       cron job watches (keep your own copy too -- the original gets
+       deleted once cron executes it).
+    4. Wait for the cron interval, then check your scratch directory for
+       the output file.
+
+Level 24 -> 25
+  A daemon on a fixed port accepts the current password plus a 4-digit
+  PIN on one line, and must be brute-forced across all 10000 combos. Key
+  hint: you don't need a new connection per guess -- one open connection
+  can take many lines of input.
+    for (( i=0; i<10000; i++ )); do
+        printf "<bandit24 password> %04d\n" "$i"
+    done | nc localhost 30002 > output.txt
+  %04d zero-pads to exactly 4 digits (plain echo/no padding, or a loop
+  range that stops at 999 instead of 9999, are the classic bugs here).
+  Then grep output.txt for the one response line that differs from the
+  repeated "wrong" responses -- that's the next password.
+
+Level 25 -> 26
+  Login shell for this level is restricted (not /bin/bash) -- turns out to
+  be `more`, invoked via `exec more ~/text.txt`. If the file fits on one
+  screen, more just displays it and exits, giving no foothold.
+    1. Shrink your terminal window drastically before connecting (very few
+       rows, e.g. ~10-20 -- a 1-row terminal breaks `more` itself, so don't
+       go that extreme) so the file no longer fits on one screen.
+    2. SSH in with the private key for this level.
+    3. Once `more` pauses at a --More-- prompt, press v to open the
+       default editor (vi) on the file -- more's interactive commands
+       include spawning an editor.
+
+Level 26 -> 27
+  Continuing from the vi escape above: from inside vi, drop to a shell:
+    (press Esc to ensure command mode, then:)
+    :set shell=/bin/bash
+    :shell
+  This spawns an interactive bash as the privileged user (bandit26's
+  restricted shell is actually setgid/configured such that escaping it
+  lands you with bandit27-level access, without needing bandit27's
+  password directly).
+
+Level 27 -> 28
+  Git repo is on the OTW server itself, must be cloned from your LOCAL
+  machine (not from inside an OTW ssh session). Needs the full ssh:// URL
+  with explicit port:
+    git clone ssh://bandit27-git@bandit.labs.overthewire.org:2220/home/bandit27-git/repo
+  Enter the matching bandit-level password when prompted. Look inside the
+  cloned repo for the password file.
+  Common mistakes: omitting ssh:// entirely, or omitting the :2220 port
+  (which must sit right after the hostname, before the path).
+
+Level 28 -> 29
+  Same clone pattern as level 27. This time the password isn't in the
+  current checked-out files -- it was removed in a later commit.
+    git log                        (see commit history/messages)
+    git show <commit hash>         (see exactly what a commit changed --
+                                     useful on a commit titled like
+                                     "fix data leak" to see what got
+                                     deleted)
+  (git diff HEAD~1 also works for comparing to one commit back -- note the
+  tilde attaches directly to the ref with no space: HEAD~1, not "HEAD ~1".)
+
+Level 29 -> 30
+  Password lives on a different branch, not visible in a plain git log on
+  the default branch. Dig into the raw .git directory:
+    cat .git/packed-refs
+  This reveals branches/tags that aren't obvious from `git branch`. Check
+  out the other branch shown there to find the password.
+
+Level 30 -> 31
+  Similar git-internals level: packed-refs contains a tag (not a branch)
+  pointing at an object hash. Checking that hash out with `git checkout
+  <hash>` fails with "unable to read tree" -- because the tag doesn't
+  point at a commit/tree at all, it points directly at a blob (raw file
+  content, with no tree/commit wrapping it, so it's unreachable through
+  normal history and invisible to ls/checkout).
+    git cat-file -t <hash>     -> confirms it's "blob" (not tree/commit)
+    git cat-file -p <hash>     -> prints the blob's raw content directly
+  (If cat-file -t reports the object missing, `git fetch --tags` first.)
+
+Level 31 -> 32
+  Git repo level requiring you to make a specific change and push it
+  (e.g. add a particular file, matching a .gitignore or README
+  instruction) to receive the next password back.
+
+Level 32 -> 33
+  Login shell is an "uppercase shell" that converts all input letters to
+  uppercase before running it as a command -- so normal lowercase commands
+  like ls/cat become LS/CAT and fail. The fix is to type something that
+  ISN'T made of letters, since there's nothing for the uppercase transform
+  to mangle:
+    $0
+  ($0 refers to the current shell/program and re-executes it in place,
+  dropping you into a normal shell.) Typing `bash` directly after escaping
+  also works, spawning a fresh un-mangled shell process.
+  Note: bandit32's restricted shell is set up (setgid) such that escaping
+  it drops you straight into bandit33-level access -- no bandit33 password
+  needed.
+
+Level 33
+  No level 33 -> 34 published yet as of this summary (Nov 25, 2026).
+
+-----------------------------------------------------------------------
+Recurring themes across the wargame:
+  - File/text tools: cat, ls -a, file, find, grep, strings, sort/uniq, xxd,
+    base64, tr (rot13)
+  - Compression formats: gzip/bzip2/tar, identified iteratively via `file`
+  - SSH mechanics: -i for keys, -p for port (not -P, that's scp), key file
+    permissions (chmod 600), running one-off remote commands via
+    ssh user@host 'command'
+  - Networking: nc / ncat --ssl for raw and TLS socket interaction, nmap
+    for port discovery, client vs. server roles (suconnect was a client,
+    not a server)
+  - Privilege escalation via: setuid binaries, cron jobs run by root/other
+    users, restricted shell escapes (more -> vi -> :shell, uppercase shell
+    -> $0/bash)
+  - Git internals: commit history (log/show/diff), packed-refs, branches
+    vs tags, and the four object types (blob/tree/commit/tag) -- a tag can
+    point directly at a blob with no tree/commit involved
+  - Brute forcing with a single persistent connection and zero-padded
+    loop generation (printf "%04d")
